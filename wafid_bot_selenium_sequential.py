@@ -138,7 +138,7 @@ def gcc_enter_slip_number_func(driver, slip_number):
     return
 
 # Define a function to extract the medical center and send a Telegram notification
-def extract_medical_center(driver, idx, slip):
+def extract_medical_center_sequential(driver, idx, slip):
     """
     This is a function that extracts the medical center and sends a Telegram notification after the slip number has been successfully submitted.
     Parameters of the function:
@@ -227,7 +227,7 @@ def execute_all(driver):
 
 
     for idx, slip in enumerate(slip_numbers_list):
-        extract_medical_center(driver=driver, idx=idx, slip=slip)
+        extract_medical_center_sequential(driver=driver, idx=idx, slip=slip)
 
     # Quit the web driver to save memory
     driver.quit()
