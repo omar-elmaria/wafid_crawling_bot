@@ -47,6 +47,7 @@ chrome_options.add_argument("enable-features=NetworkServiceInProcess") # Combats
 chrome_options.add_argument("disable-features=NetworkService") # Combats the renderer timeout problem
 chrome_options.add_experimental_option('extensionLoadTimeout', 45000) # Fixes the problem of renderer timeout for a slow PC
 chrome_options.add_argument("--window-size=1920x1080") # Set the Chrome window size to 1920 x 1080
+chrome_options.add_argument(f"--load-extension={path}") # Load the captcha solving service extension
 
 # Global inputs (1): Basic information
 base_url = "https://wafid.com/medical-status-search/"
@@ -127,6 +128,25 @@ def gcc_enter_slip_number_func(driver, slip_number):
         if captcha_msg is None and gcc_field_content is not None:
             break
         else:
+            captcha_solving_status = "In process..."
+            while "Ready" not in captcha_solving_status:
+                logging.info("Waiting for the captcha to be solved")
+                time.sleep(1)
+
+                # Extract the HTML content of the page again and retrieve the captcha_solving_status
+                soup1 = BeautifulSoup(markup=driver.page_source, features="html.parser")
+                captcha_solving_status = soup1.select_one(selector="div.cm-addon-inner > span")
+                if captcha_solving_status is None:
+                    # If the web element is NULL, this means the CAP Monster service was not activated, so break out of the for loop and continue with the rest of the code
+                    captcha_solving_end_state_msg = "Cap monster service was not activated and the captcha was not solved. Breaking out of the for loop and continuing with the rest of the code..."
+                    break
+                else:
+                    captcha_solving_status = captcha_solving_status.get_text(strip=True)
+                    captcha_solving_end_state_msg = "Captcha solved. Now, clearing the GCC slip field and inputting the slip number..."
+
+            # Print the status message from the while loop
+            logging.info(captcha_solving_end_state_msg)
+
             # Clear the form, re-enter the slip number and re-submit the form
             driver.find_element(by=By.XPATH, value="//input[@id='id_gcc_slip_no']").clear()
             time.sleep(wait_time)
