@@ -119,8 +119,8 @@ def gcc_enter_slip_number_func(driver, slip_number):
         soup1 = BeautifulSoup(markup=driver.page_source, features="html.parser")
         captcha_msg = soup1.select_one("input.g-recaptcha+p")
         gcc_field_content = soup1.select_one("input[placeholder='Enter GCC Slip Number']").get_attribute_list("value")[0]
-        logging.info(f"captcha_msg of gcc_slipe_number_checker iteration {idx + 1}: {captcha_msg}")
-        logging.info(f"gcc_field_content of gcc_slipe_number_checker iteration {idx + 1}: {gcc_field_content}")
+        logging.info(f"captcha_msg of gcc_slipe_number_checker iteration {idx + 1} for slip number {slip_number}: {captcha_msg}")
+        logging.info(f"gcc_field_content of gcc_slipe_number_checker iteration {idx + 1} for slip number {slip_number}: {gcc_field_content}")
 
         # If the captcha_msg is empty and gcc_field_content contains a number, this means that the form was submitted successfully and we can break out of the loop
         # Otherwise, we need to clear the field and try inputting the form number again
@@ -154,7 +154,7 @@ def extract_medical_center_sequential(driver, idx, slip):
     # Option 2 (Pass - Records not found): Selector --> div.header
     # Option 3 (Fail - revert back to captcha on the previous page): Selector --> input.g-recaptcha+p
     status_message = soup2.select_one(selector="input[name='traveled_country__name'], div.header, input.g-recaptcha+p")
-    logging.info(f"status_message: {status_message}")
+    logging.info(f"status_message for slip number {slip}: {status_message}")
 
     # Invoke the "gcc_enter_slip_number_func" function
     gcc_enter_slip_number_func(driver=driver, slip_number=slip)

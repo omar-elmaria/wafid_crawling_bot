@@ -120,8 +120,8 @@ def gcc_enter_slip_number_func(driver, slip_number):
         soup1 = BeautifulSoup(markup=driver.page_source, features="html.parser")
         captcha_msg = soup1.select_one("input.g-recaptcha+p")
         gcc_field_content = soup1.select_one("input[placeholder='Enter GCC Slip Number']").get_attribute_list("value")[0]
-        logging.info(f"captcha_msg of gcc_slipe_number_checker iteration {idx + 1}: {captcha_msg}")
-        logging.info(f"gcc_field_content of gcc_slipe_number_checker iteration {idx + 1}: {gcc_field_content}")
+        logging.info(f"captcha_msg of gcc_slipe_number_checker iteration {idx + 1} for slip number {slip_number}: {captcha_msg}")
+        logging.info(f"gcc_field_content of gcc_slipe_number_checker iteration {idx + 1} for slip number {slip_number}: {gcc_field_content}")
 
         # If the captcha_msg is empty and gcc_field_content contains a number, this means that the form was submitted successfully and we can break out of the loop
         # Otherwise, we need to clear the field and try inputting the form number again
@@ -130,7 +130,7 @@ def gcc_enter_slip_number_func(driver, slip_number):
         else:
             captcha_solving_status = "In process..."
             while "Ready" not in captcha_solving_status:
-                logging.info("Waiting for the captcha to be solved")
+                logging.info(f"Waiting for the captcha to be solved for slip number {slip_number}")
                 time.sleep(1)
 
                 # Extract the HTML content of the page again and retrieve the captcha_solving_status
@@ -138,11 +138,11 @@ def gcc_enter_slip_number_func(driver, slip_number):
                 captcha_solving_status = soup1.select_one(selector="div.cm-addon-inner > span")
                 if captcha_solving_status is None:
                     # If the web element is NULL, this means the CAP Monster service was not activated, so break out of the for loop and continue with the rest of the code
-                    captcha_solving_end_state_msg = "Cap monster service was not activated and the captcha was not solved. Breaking out of the for loop and continuing with the rest of the code..."
+                    captcha_solving_end_state_msg = f"Cap monster service was not activated and the captcha was not solved for slip number {slip_number}. Breaking out of the for loop and continuing with the rest of the code..."
                     break
                 else:
                     captcha_solving_status = captcha_solving_status.get_text(strip=True)
-                    captcha_solving_end_state_msg = "Captcha solved. Now, clearing the GCC slip field and inputting the slip number..."
+                    captcha_solving_end_state_msg = f"Captcha solved for slip number {slip_number}. Now, clearing the GCC slip field and inputting the slip number..."
 
             # Print the status message from the while loop
             logging.info(captcha_solving_end_state_msg)
@@ -174,7 +174,7 @@ def extract_medical_center_sequential(driver, idx, slip):
     # Option 2 (Pass - Records not found): Selector --> div.header
     # Option 3 (Fail - revert back to captcha on the previous page): Selector --> input.g-recaptcha+p
     status_message = soup2.select_one(selector="input[name='traveled_country__name'], div.header, input.g-recaptcha+p")
-    logging.info(f"status_message: {status_message}")
+    logging.info(f"status_message for slip number {slip}: {status_message}")
 
     # Invoke the "gcc_enter_slip_number_func" function
     gcc_enter_slip_number_func(driver=driver, slip_number=slip)
