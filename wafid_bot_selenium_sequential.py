@@ -119,8 +119,8 @@ def gcc_enter_slip_number_func(driver, slip_number):
         soup1 = BeautifulSoup(markup=driver.page_source, features="html.parser")
         captcha_msg = soup1.select_one("input.g-recaptcha+p")
         gcc_field_content = soup1.select_one("input[placeholder='Enter GCC Slip Number']").get_attribute_list("value")[0]
-        print(f"captcha_msg of gcc_slipe_number_checker iteration {idx + 1}: {captcha_msg}")
-        print(f"gcc_field_content of gcc_slipe_number_checker iteration {idx + 1}: {gcc_field_content}")
+        logging.info(f"captcha_msg of gcc_slipe_number_checker iteration {idx + 1}: {captcha_msg}")
+        logging.info(f"gcc_field_content of gcc_slipe_number_checker iteration {idx + 1}: {gcc_field_content}")
 
         # If the captcha_msg is empty and gcc_field_content contains a number, this means that the form was submitted successfully and we can break out of the loop
         # Otherwise, we need to clear the field and try inputting the form number again
@@ -154,7 +154,7 @@ def extract_medical_center(driver, idx, slip):
     # Option 2 (Pass - Records not found): Selector --> div.header
     # Option 3 (Fail - revert back to captcha on the previous page): Selector --> input.g-recaptcha+p
     status_message = soup2.select_one(selector="input[name='traveled_country__name'], div.header, input.g-recaptcha+p")
-    print(f"status_message: {status_message}")
+    logging.info(f"status_message: {status_message}")
 
     # Invoke the "gcc_enter_slip_number_func" function
     gcc_enter_slip_number_func(driver=driver, slip_number=slip)
@@ -166,7 +166,7 @@ def extract_medical_center(driver, idx, slip):
     # The result could either be "Records not found" pr "Medical Center found". Either way, send a Telegram message
     if status_message2.get_text(strip=True) == "Records not found":
         # Print a message saying that there was no record found for this slip number
-        print(f"No records found for slip number {slip}")
+        logging.info(f"No records found for slip number {slip}")
 
         # Send a Telegram message saying that there was no record found for this slip number
         loop.run_until_complete(send_telegram_message(bot=wafid_bot_obj, chat_id=wafid_chat_id, message=f"No records found for slip number {slip}"))
@@ -179,7 +179,7 @@ def extract_medical_center(driver, idx, slip):
         }
 
         # Print the output
-        print(output_dict)
+        logging.info(output_dict)
 
         # Send a Telegram message saying that a record for that slip number was found
         loop.run_until_complete(send_telegram_message(
@@ -190,7 +190,7 @@ def extract_medical_center(driver, idx, slip):
 
     # If we are at the last iteration, print a message saying that we have reached the end of the iterations and exit the function. Otherwise, enter another slip number and search for a record
     if idx + 1 == len(slip_numbers_list):
-        print("End of iterations. Breaking out of the loop")
+        logging.info("End of iterations. Breaking out of the loop")
         return
     else:
         # Clear the text field containing the slip number
