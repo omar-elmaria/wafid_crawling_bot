@@ -6,3 +6,4 @@ invisible_captcha_test_script.py
 __pycache__
 wafid/
 cap_monster_extension/
+*.gsheet
