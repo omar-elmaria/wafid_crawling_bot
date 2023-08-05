@@ -42,7 +42,7 @@ chrome_options.add_argument("--window-size=1920x1080") # Set the Chrome window s
 
 # Global inputs (1): Basic information
 base_url = "https://wafid.com/medical-status-search/"
-slip_number_list_len = 100
+slip_number_list_len = 20
 parallel_jobs = 5
 
 ###-----------------------------###-----------------------------###
