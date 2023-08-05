@@ -1,19 +1,21 @@
+import asyncio
 import os
 import time
+import warnings
 
+import gspread
+import pandas as pd
+from bs4 import BeautifulSoup
 from dotenv import load_dotenv
+from oauth2client.service_account import ServiceAccountCredentials
+from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service as ChromeService
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
-from selenium import webdriver
 from telegram import Bot
 from webdriver_manager.chrome import ChromeDriverManager
-from bs4 import BeautifulSoup
-import asyncio
-
-import warnings
 
 warnings.filterwarnings(action="ignore")
 
@@ -21,7 +23,7 @@ warnings.filterwarnings(action="ignore")
 load_dotenv()
 
 # Extension path for the Captcha Solving service (Cap Monster)
-path = os.path.dirname(os.getcwd() + "\cap_monster_extension\manifest.json")
+path = os.path.dirname(os.path.expanduser("~") + "\cap_monster_extension\manifest.json")
 
 # Set the Chrome options
 chrome_options = Options()
@@ -29,7 +31,6 @@ chrome_options.add_argument("start-maximized") # Required for a maximized Viewpo
 chrome_options.add_experimental_option('excludeSwitches', ['enable-logging', 'enable-automation', 'disable-popup-blocking']) # Disable pop-ups to speed up browsing
 chrome_options.add_experimental_option("detach", True) # Keeps the Chrome window open after all the Selenium commands/operations are performed 
 chrome_options.add_experimental_option('prefs', {'intl.accept_languages': 'en,en_US'}) # Operate Chrome using English as the main language
-# chrome_options.add_argument('--blink-settings=imagesEnabled=false') # Disable images
 # chrome_options.add_argument("--headless=new") # Operate Selenium in headless mode
 chrome_options.add_argument('--no-sandbox') # Disables the sandbox for all process types that are normally sandboxed. Meant to be used as a browser-level switch for testing purposes only
 chrome_options.add_argument('--disable-gpu') # An additional Selenium setting for headless to work properly, although for newer Selenium versions, it's not needed anymore
@@ -37,17 +38,38 @@ chrome_options.add_argument("enable-features=NetworkServiceInProcess") # Combats
 chrome_options.add_argument("disable-features=NetworkService") # Combats the renderer timeout problem
 chrome_options.add_experimental_option('extensionLoadTimeout', 45000) # Fixes the problem of renderer timeout for a slow PC
 chrome_options.add_argument("--window-size=1920x1080") # Set the Chrome window size to 1920 x 1080
-chrome_options.add_argument(f"--load-extension={path}") # Load the captcha solving service extension
 
 # Global inputs (1): Basic information
 base_url = "https://wafid.com/medical-status-search/"
+slip_number_list_len = 10
 
-# Global inputs (2): List of slip numbers
-slip_numbers = [
-    "90508202360327000",
-    "90508202360327001",
-    "90508202360327002",
-]
+# Global inputs (2): Get the list of slip numbers from the Google Sheet --> https://docs.google.com/spreadsheets/d/1F2F2yWmvMebUG1rtppzt1Z9RZ9bOSHwu2VjXzk4XmC8/edit?pli=1#gid=0
+
+# Replace 'your_spreadsheet_key' with the key of your Google Sheets document.
+# You can find the key in the URL of your spreadsheet: 'https://docs.google.com/spreadsheets/d/your_spreadsheet_key/edit'
+SPREADSHEET_KEY = '1F2F2yWmvMebUG1rtppzt1Z9RZ9bOSHwu2VjXzk4XmC8'
+# Replace 'your_service_account.json' with the filename of your service account key.
+SERVICE_ACCOUNT_FILE = os.path.expanduser("~") + "/service_account_key.json"
+
+# Authenticate with Google Sheets API using the service account credentials
+scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
+creds = ServiceAccountCredentials.from_json_keyfile_name(SERVICE_ACCOUNT_FILE, scope)
+client = gspread.authorize(creds)
+
+# Open the spreadsheet
+spreadsheet = client.open_by_key(SPREADSHEET_KEY)
+
+# Select the worksheet you want to read from (by index, starting from 0) or by title
+worksheet = spreadsheet.get_worksheet(index=0)
+
+# Get all values from the worksheet
+df_slip_numbers = pd.DataFrame(worksheet.get_all_records(empty2zero=False, default_blank=None))
+
+slip_numbers_list = []
+starting_slip_number = int(df_slip_numbers["slip_number"][0])
+for i in range(1, slip_number_list_len + 1):
+    slip_numbers_list.append(starting_slip_number)
+    starting_slip_number += 1
 
 # Global inputs (3): Telegram bot
 wafid_bot_token = os.getenv("WAFID_BOT_TOKEN")
@@ -77,7 +99,7 @@ WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.XPATH, "//inp
 
 # Define a function to enter the GCC slip number and click on the "Check" button
 def gcc_slip_number_checker(slip_number):
-    for idx in range(10):
+    for idx in range(15):
         # Declare a waiting time based on the iteration number
         if idx + 1 <= 5:
             wait_time = 1.5 # 1.5 seconds
@@ -107,7 +129,7 @@ def gcc_slip_number_checker(slip_number):
     return
 
 # If this message "Error verifying reCAPTCHA, please try again" pops up, then click on the check button again, up to five times
-for idx, slip in enumerate(slip_numbers):
+for idx, slip in enumerate(slip_numbers_list):
     # Extract the HTML source code of the page with BeautifulSoup
     soup2 = BeautifulSoup(markup=driver.page_source, features="html.parser")
 
@@ -140,7 +162,7 @@ for idx, slip in enumerate(slip_numbers):
             message=f"Records were found for slip number {slip}. Info --> {output_dict}"
         ))
 
-    if idx + 1 == len(slip_numbers):
+    if idx + 1 == len(slip_numbers_list):
         print("End of iterations. Breaking out of the loop")
         break
     else:
@@ -151,7 +173,7 @@ for idx, slip in enumerate(slip_numbers):
         time.sleep(2.5)
 
         # Enter a the slip number after the current iteration
-        driver.find_element(by=By.XPATH, value="//input[@id='id_gcc_slip_no']").send_keys(slip_numbers[idx + 1])
+        driver.find_element(by=By.XPATH, value="//input[@id='id_gcc_slip_no']").send_keys(slip_numbers_list[idx + 1])
 
         # Wait for 2.5 seconds before clicking on check
         time.sleep(2.5)
