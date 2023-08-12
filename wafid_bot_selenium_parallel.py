@@ -24,7 +24,7 @@ warnings.filterwarnings(action="ignore")
 load_dotenv()
 
 # Extension path for the Captcha Solving service (Cap Monster)
-path = os.path.dirname(os.path.expanduser("~") + "\cap_monster_extension\manifest.json")
+path = os.path.dirname(os.path.expanduser("~") + "/cap_monster_extension/manifest.json")
 
 # Set the Chrome options
 chrome_options = Options()
