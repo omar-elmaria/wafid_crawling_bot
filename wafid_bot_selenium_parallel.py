@@ -43,7 +43,7 @@ chrome_options.add_argument("--window-size=1920x1080") # Set the Chrome window s
 # Global inputs (1): Basic information
 base_url = "https://wafid.com/medical-status-search/"
 slip_number_list_len = 20
-parallel_jobs = 5
+parallel_jobs = -1
 
 ###-----------------------------###-----------------------------###
 
@@ -210,7 +210,7 @@ def extract_medical_center_parallel(slip):
         driver.quit()
 
         # Send a message to the Telegram bot saying that an error occurred
-        logging.exception(f"An error occurred while crawling the wafid bot: {e}")
+        logging.exception(f"An error occurred while crawling the wafid bot for slip number {slip}: {e}")
         loop.run_until_complete(send_telegram_message(bot=bot_errors, chat_id=errors_bot_chat_id, message=f"An error occurred while crawling the wafid bot: {e}"))
 
 def execute_all():
