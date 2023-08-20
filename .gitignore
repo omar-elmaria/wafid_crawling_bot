@@ -9,3 +9,4 @@ cap_monster_extension/
 *.gsheet
 wafid_bot_logs.log
 *.txt
+*.rdp
