@@ -2,21 +2,24 @@
 import asyncio
 import logging
 import os
+import re
 import time
 import warnings
 
 import gspread
+import numpy as np
 import pandas as pd
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
+from joblib import Parallel, delayed
 from oauth2client.service_account import ServiceAccountCredentials
-from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
+from seleniumwire import webdriver
 from telegram import Bot
-from joblib import Parallel, delayed
+from telegram.constants import ParseMode
 
 warnings.filterwarnings(action="ignore")
 
@@ -26,7 +29,7 @@ load_dotenv()
 # Extension path for the Captcha Solving service (Cap Monster)
 path = os.path.dirname(os.path.expanduser("~") + "/cap_monster_extension/manifest.json")
 
-# Set the Chrome options
+# Set the Chrome options (DO not disable images as this causes the captcha test to fail)
 chrome_options = Options()
 chrome_options.add_argument("start-maximized") # Required for a maximized Viewport
 chrome_options.add_experimental_option('excludeSwitches', ['enable-logging', 'enable-automation', 'disable-popup-blocking']) # Disable pop-ups to speed up browsing
@@ -42,8 +45,10 @@ chrome_options.add_argument("--window-size=1920x1080") # Set the Chrome window s
 
 # Global inputs (1): Basic information
 base_url = "https://wafid.com/medical-status-search/"
-slip_number_list_len = 20
+slip_number_list_len = 100
 parallel_jobs = -1
+webdriver_waiting_time = 30
+recaptcha_retries = 5
 
 ###-----------------------------###-----------------------------###
 
@@ -77,19 +82,32 @@ for i in range(1, slip_number_list_len + 1):
 
 ###-----------------------------###-----------------------------###
 
+# Define a function to specify the proxy configuration
+def chrome_proxy(user: str, password: str, endpoint: str):
+    wire_options = {
+        "proxy": {
+            "http": f"http://{user}:{password}@{endpoint}",
+            "https": f"http://{user}:{password}@{endpoint}",
+        },
+    }
+
+    return wire_options
+
+###-----------------------------###-----------------------------###
+
 # Define a function to enter the GCC slip number and click on the "Check" button
-def gcc_enter_slip_number_func(driver, slip_number):
+def gcc_enter_slip_number_func(driver, slip_number, is_randomize_waiting_time):
     """
     A function to enter the GCC slip number and click on the "Check" button
     """
-    for idx in range(15):
+    for idx in range(recaptcha_retries):
         # Declare a waiting time based on the iteration number
         if idx + 1 <= 5:
-            wait_time = 1.5 # 1.5 seconds
-        elif idx + 1 > 5 and idx + 1 <= 10:
-            wait_time = 2.5 # 2.5 seconds
-        else:
             wait_time = 5 # 5 seconds
+        elif idx + 1 > 5 and idx + 1 <= 10:
+            wait_time = 7.5 # 7.5 seconds
+        else:
+            wait_time = 10 # 10 seconds
 
         # Extract the captcha message. Don't use driver.find_element because it is slow
         soup1 = BeautifulSoup(markup=driver.page_source, features="html.parser")
@@ -105,13 +123,16 @@ def gcc_enter_slip_number_func(driver, slip_number):
         else:
             # Clear the form, re-enter the slip number and re-submit the form
             driver.find_element(by=By.XPATH, value="//input[@id='id_gcc_slip_no']").clear()
+            time.sleep(2.5)
+            if is_randomize_waiting_time == True:
+                for char in str(slip_number):
+                    driver.find_element(by=By.XPATH, value="//input[@id='id_gcc_slip_no']").send_keys(char)
+                    time.sleep(np.random.rand())
+            else:
+                driver.find_element(by=By.XPATH, value="//input[@id='id_gcc_slip_no']").send_keys(slip_number)
             time.sleep(wait_time)
-            driver.find_element(by=By.XPATH, value="//input[@id='id_gcc_slip_no']").send_keys(slip_number)
-            time.sleep(wait_time)
-
-            # Click on the check button
             driver.execute_script("document.getElementById('med-status-form-submit').click()")
-    return
+    return idx, captcha_msg
 
 # Define a function to extract the medical center and send a Telegram notification
 def extract_medical_center_parallel(slip):
@@ -133,6 +154,11 @@ def extract_medical_center_parallel(slip):
     wafid_chat_id = os.getenv("WAFID_BOT_CHAT_ID")
     errors_bot_token = os.getenv("ERRORS_BOT_TOKEN")
     errors_bot_chat_id = os.getenv("ERRORS_BOT_CHAT_ID")
+    
+    # Global inputs (4): Proxy credentials
+    PROXY_SERVICE_USERNAME = os.getenv("PROXY_SERVICE_USERNAME")
+    PROXY_SERVICE_PASSWORD = os.getenv("PROXY_SERVICE_PASSWORD")
+    PROXY_SERVICE_ENDPOINT = os.getenv("PROXY_SERVICE_ENDPOINT")
 
     # Define an event loop to manage and execute async tasks such as coroutines and callbacks and assign it to the parallel process using set_event_loop 
     loop = asyncio.new_event_loop()
@@ -144,22 +170,27 @@ def extract_medical_center_parallel(slip):
 
     # Function to send Telegram message
     async def send_telegram_message(bot, chat_id, message):
-        await bot.send_message(chat_id=chat_id, text=message)
+        await bot.send_message(chat_id=chat_id, text=message, parse_mode=ParseMode.MARKDOWN)
 
     try:
         # Instantiate the web driver and set the implicit waiting time to be 60 seconds
-        driver = webdriver.Chrome(options=chrome_options)
+        proxies = chrome_proxy(PROXY_SERVICE_USERNAME, PROXY_SERVICE_PASSWORD, PROXY_SERVICE_ENDPOINT)
+        driver = webdriver.Chrome(options=chrome_options, seleniumwire_options=proxies)
         driver.implicitly_wait(60)
 
+        # Navigate to ip.oxylabs.io to get the IP address
+        driver.get("https://ip.oxylabs.io/")
+        logging.info(f'\nYour IP is: {re.search(r"[0-9].{2,}", driver.page_source).group()}')
+        
         # Navigate to the website
         driver.get(base_url)
 
-        # Click on the "Wafid Slip Number" radio button
-        # driver.find_element(by=By.XPATH, value="//input[@id='id_search_variant_1']").click()
+        # Wait for the "Wafid Slip Number" radio button and click on it
+        WebDriverWait(driver, webdriver_waiting_time).until(EC.element_to_be_clickable((By.XPATH, "//input[@id='id_search_variant_1']")))
         driver.execute_script("document.getElementById('id_search_variant_1').click()")
 
-        # Wait until the "GCC Slip NO" selector appears and enter the first slip number
-        WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.XPATH, "//input[@id='id_gcc_slip_no']")))
+        # Wait until the "GCC Slip NO" selector appears
+        WebDriverWait(driver, webdriver_waiting_time).until(EC.presence_of_element_located((By.XPATH, "//input[@id='id_gcc_slip_no']")))
 
         # Extract the HTML source code of the page with BeautifulSoup
         soup2 = BeautifulSoup(markup=driver.page_source, features="html.parser")
@@ -172,7 +203,11 @@ def extract_medical_center_parallel(slip):
         logging.info(f"status_message for slip number {slip}: {status_message}")
 
         # Invoke the "gcc_enter_slip_number_func" function
-        gcc_enter_slip_number_func(driver=driver, slip_number=slip)
+        idx, captcha_msg = gcc_enter_slip_number_func(driver=driver, slip_number=slip, is_randomize_waiting_time=True)
+
+        # If it is the last iteration and and the form was not submitted successfuly, send a message to Telegram saying that it was not possible to submit the form for this slip number
+        if idx + 1 == recaptcha_retries and captcha_msg is not None:
+            loop.run_until_complete(send_telegram_message(bot=wafid_bot_obj, chat_id=wafid_chat_id, message=f"It was not possible to submit the form successfully for slip number {slip} after {idx + 1} times"))
         
         # Download the HTML content of the page and extract the status message again
         soup3 = BeautifulSoup(markup=driver.page_source, features="html.parser")
@@ -180,11 +215,13 @@ def extract_medical_center_parallel(slip):
         
         # The result could either be "Records not found" pr "Medical Center found". Either way, send a Telegram message
         if status_message2.get_text(strip=True) == "Records not found":
+            records_not_found_message = f"No records found for slip number {slip}. It took {idx + 1} iterations to submit the form successfully"
+
             # Print a message saying that there was no record found for this slip number
-            logging.info(f"No records found for slip number {slip}")
+            logging.info(records_not_found_message)
 
             # Send a Telegram message saying that there was no record found for this slip number
-            loop.run_until_complete(send_telegram_message(bot=wafid_bot_obj, chat_id=wafid_chat_id, message=f"No records found for slip number {slip}"))
+            loop.run_until_complete(send_telegram_message(bot=wafid_bot_obj, chat_id=wafid_chat_id, message=records_not_found_message))
         if status_message2.get_attribute_list("value")[0] is not None:
             # Extract the fields of interest
             output_dict = {
@@ -197,10 +234,14 @@ def extract_medical_center_parallel(slip):
             logging.info(output_dict)
 
             # Send a Telegram message saying that a record for that slip number was found
+            if output_dict["country"] == "Saudi Arabia":
+                output_dict_message = f"Records were found for slip number {slip}. It took {idx + 1} iterations to submit the form successfully. Info --> *{output_dict}*" # Bold the output
+            else:
+                output_dict_message = f"Records were found for slip number {slip}. It took {idx + 1} iterations to submit the form successfully. Info --> {output_dict}" # Normal text
             loop.run_until_complete(send_telegram_message(
                 bot=wafid_bot_obj,
                 chat_id=wafid_chat_id,
-                message=f"Records were found for slip number {slip}. Info --> {output_dict}"
+                message=output_dict_message
             ))
         
         # Close the driver to save memory
