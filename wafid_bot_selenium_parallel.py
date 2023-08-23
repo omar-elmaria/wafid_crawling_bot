@@ -2,6 +2,7 @@
 import asyncio
 import logging
 import os
+import random
 import re
 import time
 import warnings
@@ -10,6 +11,8 @@ import gspread
 import numpy as np
 import pandas as pd
 from bs4 import BeautifulSoup
+from capmonstercloudclient import CapMonsterClient, ClientOptions
+from capmonstercloudclient.requests import RecaptchaV3ProxylessRequest
 from dotenv import load_dotenv
 from joblib import Parallel, delayed
 from oauth2client.service_account import ServiceAccountCredentials
@@ -89,9 +92,39 @@ def chrome_proxy(user: str, password: str, endpoint: str):
             "http": f"http://{user}:{password}@{endpoint}",
             "https": f"http://{user}:{password}@{endpoint}",
         },
+        "auto_config": False # Comment this out if you want to use proxies
     }
 
     return wire_options
+
+###-----------------------------###-----------------------------###
+
+def solve_capmonster_captcha(slip_number):
+    """
+    A function that solves the recaptcha V3 using the capmonster service
+    """
+    async def solve_captcha_async(num_requests):
+        tasks = [asyncio.create_task(cap_monster_client.solve_captcha(recaptcha3request)) 
+                for _ in range(num_requests)]
+        return await asyncio.gather(*tasks, return_exceptions=True)
+
+    key = os.getenv('CAPMONSTER_KEY')
+    client_options = ClientOptions(api_key=key)
+    cap_monster_client = CapMonsterClient(options=client_options)
+
+    recaptcha3request = RecaptchaV3ProxylessRequest(
+        websiteUrl="https://wafid.com/medical-status-search/",
+        websiteKey="6LflPAwnAAAAAL2wBGi6tSyGUyj-xFvftINOR9xp",
+        min_score=0.9
+    )
+
+    nums = 3
+
+    # Async test
+    async_responses = asyncio.run(solve_captcha_async(nums))
+    captcha_response = async_responses[0]["gRecaptchaResponse"]
+    logging.info(f"Captcha response of {slip_number}: {captcha_response}")
+    return captcha_response
 
 ###-----------------------------###-----------------------------###
 
@@ -100,6 +133,13 @@ def gcc_enter_slip_number_func(driver, slip_number, is_randomize_waiting_time):
     """
     A function to enter the GCC slip number and click on the "Check" button
     """
+    # Solve the captcha
+    captcha_response = solve_capmonster_captcha(slip_number=slip_number)
+    
+    # Inject the response in the InnerHTML of g-recaptcha-response
+    driver.execute_script(f"document.getElementById('g-recaptcha-response').innerHTML='{captcha_response}'")
+    
+    # Do the actions you want to do on the page
     for idx in range(recaptcha_retries):
         # Declare a waiting time based on the iteration number
         if idx + 1 <= 5:
@@ -127,11 +167,14 @@ def gcc_enter_slip_number_func(driver, slip_number, is_randomize_waiting_time):
             if is_randomize_waiting_time == True:
                 for char in str(slip_number):
                     driver.find_element(by=By.XPATH, value="//input[@id='id_gcc_slip_no']").send_keys(char)
-                    time.sleep(np.random.rand())
+                    time.sleep(random.uniform(0.5, 0.7)) # Generate a random number between 0.5 and 0.7
             else:
                 driver.find_element(by=By.XPATH, value="//input[@id='id_gcc_slip_no']").send_keys(slip_number)
             time.sleep(wait_time)
-            driver.execute_script("document.getElementById('med-status-form-submit').click()")
+
+            # Submit the form (Clicking on the 'Check' button directly using this command does not always work --> driver.execute_script("document.getElementById('med-status-form-submit').click()"))
+            # The instructions of solving the invisible captcha were taken from this link --> https://captchaforum.com/threads/how-to-automatically-solve-invisible-recaptcha-v2.2055/
+            driver.execute_script("document.getElementsByClassName('ui form')[0].submit()")
     return idx, captcha_msg
 
 # Define a function to extract the medical center and send a Telegram notification
