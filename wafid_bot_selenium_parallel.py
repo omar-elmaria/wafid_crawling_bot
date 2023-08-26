@@ -250,7 +250,11 @@ def extract_medical_center_parallel(slip):
 
         # If it is the last iteration and and the form was not submitted successfuly, send a message to Telegram saying that it was not possible to submit the form for this slip number
         if idx + 1 == recaptcha_retries and captcha_msg is not None:
-            loop.run_until_complete(send_telegram_message(bot=wafid_bot_obj, chat_id=wafid_chat_id, message=f"It was not possible to submit the form successfully for slip number {slip} after {idx + 1} times"))
+            loop.run_until_complete(send_telegram_message(
+                bot=wafid_bot_obj,
+                chat_id=wafid_chat_id,
+                message=f"It was not possible to submit the form successfully for slip number {slip} after {idx + 1} times"
+            ))
         
         # Download the HTML content of the page and extract the status message again
         soup3 = BeautifulSoup(markup=driver.page_source, features="html.parser")
