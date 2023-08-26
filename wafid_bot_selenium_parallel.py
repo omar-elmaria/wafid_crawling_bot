@@ -6,10 +6,17 @@ import random
 import re
 import time
 import warnings
+from datetime import datetime
 
+# If you get an error with the ChromeBrowser version, pip install chromedriver-binary and chromedriver-binary-auto from https://pypi.org/project/chromedriver-binary/
+# Then run pip install --upgrade --force-reinstall chromedriver-binary-auto
+# This will install redetect the required version and install the newest suitable chromedriver
+# There is no need to use service=Service(executable_path=ChromeDriverManager().install()) anymore
+import chromedriver_binary  # This will add the executable to your PATH so it will be found. You can also get the absolute filename of the binary with chromedriver_binary.chromedriver_filename
 import gspread
 import numpy as np
 import pandas as pd
+import pytz
 from bs4 import BeautifulSoup
 from capmonstercloudclient import CapMonsterClient, ClientOptions
 from capmonstercloudclient.requests import RecaptchaV3ProxylessRequest
@@ -58,30 +65,34 @@ recaptcha_retries = 5
 # Global inputs (2): Get the list of slip numbers from the Google Sheet --> https://docs.google.com/spreadsheets/d/1F2F2yWmvMebUG1rtppzt1Z9RZ9bOSHwu2VjXzk4XmC8/edit?pli=1#gid=0
 # Replace 'your_spreadsheet_key' with the key of your Google Sheets document.
 # You can find the key in the URL of your spreadsheet: 'https://docs.google.com/spreadsheets/d/your_spreadsheet_key/edit'
-SPREADSHEET_KEY = '1F2F2yWmvMebUG1rtppzt1Z9RZ9bOSHwu2VjXzk4XmC8'
-# Replace 'your_service_account.json' with the filename of your service account key.
-SERVICE_ACCOUNT_FILE = os.path.expanduser("~") + "/service_account_key.json"
+def google_sheet_reader():
+    SPREADSHEET_KEY = '1F2F2yWmvMebUG1rtppzt1Z9RZ9bOSHwu2VjXzk4XmC8'
+    # Replace 'your_service_account.json' with the filename of your service account key.
+    SERVICE_ACCOUNT_FILE = os.path.expanduser("~") + "/service_account_key.json"
 
-# Authenticate with Google Sheets API using the service account credentials
-scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
-creds = ServiceAccountCredentials.from_json_keyfile_name(SERVICE_ACCOUNT_FILE, scope)
-client = gspread.authorize(creds)
+    # Authenticate with Google Sheets API using the service account credentials
+    scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
+    creds = ServiceAccountCredentials.from_json_keyfile_name(SERVICE_ACCOUNT_FILE, scope)
+    client = gspread.authorize(creds)
 
-# Open the spreadsheet
-spreadsheet = client.open_by_key(SPREADSHEET_KEY)
+    # Open the spreadsheet
+    spreadsheet = client.open_by_key(SPREADSHEET_KEY)
 
-# Select the worksheet you want to read from (by index, starting from 0) or by title
-worksheet = spreadsheet.get_worksheet(index=0)
+    # Select the worksheet you want to read from (by index, starting from 0) or by title
+    worksheet = spreadsheet.get_worksheet(index=0)
 
-# Get all values from the worksheet
-df_slip_numbers = pd.DataFrame(worksheet.get_all_records(empty2zero=False, default_blank=None))
+    # Get all values from the worksheet
+    df_slip_numbers = pd.DataFrame(worksheet.get_all_records(empty2zero=False, default_blank=None))
 
-# Create a list of slip numbers from the provided slip number
-slip_numbers_list = []
-starting_slip_number = int(df_slip_numbers["slip_number"][0])
-for i in range(1, slip_number_list_len + 1):
-    slip_numbers_list.append(starting_slip_number)
-    starting_slip_number += 1
+    # Create a list of slip numbers from the provided slip number
+    slip_numbers_list = []
+    starting_slip_number = int(df_slip_numbers["slip_number"][0])
+    for i in range(1, slip_number_list_len + 1):
+        slip_numbers_list.append(starting_slip_number)
+        starting_slip_number += 1
+    
+    # Return the slip_numbers_list and the starting slip number
+    return slip_numbers_list, df_slip_numbers["slip_number"][0]
 
 ###-----------------------------###-----------------------------###
 
@@ -138,7 +149,7 @@ def gcc_enter_slip_number_func(driver, slip_number, is_randomize_waiting_time):
     
     # Inject the response in the InnerHTML of g-recaptcha-response
     driver.execute_script(f"document.getElementById('g-recaptcha-response').innerHTML='{captcha_response}'")
-    
+
     # Do the actions you want to do on the page
     for idx in range(recaptcha_retries):
         # Declare a waiting time based on the iteration number
@@ -167,7 +178,7 @@ def gcc_enter_slip_number_func(driver, slip_number, is_randomize_waiting_time):
             if is_randomize_waiting_time == True:
                 for char in str(slip_number):
                     driver.find_element(by=By.XPATH, value="//input[@id='id_gcc_slip_no']").send_keys(char)
-                    time.sleep(random.uniform(0.5, 0.7)) # Generate a random number between 0.5 and 0.7
+                    time.sleep(random.uniform(0.1, 0.2)) # Generate a random number between 0.1 and 0.2
             else:
                 driver.find_element(by=By.XPATH, value="//input[@id='id_gcc_slip_no']").send_keys(slip_number)
             time.sleep(wait_time)
@@ -185,6 +196,7 @@ def extract_medical_center_parallel(slip):
     - driver: Chrome web driver
     - slip: Current slip number
     """
+    # Instantiate the logger
     logging.basicConfig(
         level="INFO",
         filename="wafid_bot_logs.log",
@@ -305,7 +317,21 @@ def execute_all():
     """
     A function to execute the functions defined above
     """
+    # Execute the google_sheet_reader function to get the slip number list
+    slip_numbers_list = google_sheet_reader()[0]
     Parallel(n_jobs=parallel_jobs, verbose=13)(delayed(extract_medical_center_parallel)(slip=slip) for slip in slip_numbers_list)
 
 if __name__ == "__main__":
-    execute_all()
+    while True:
+        # Get the current time in Dhaka
+        tz_Dhaka = pytz.timezone('Asia/Dhaka')
+        datetime_Dhaka = int(datetime.now(tz_Dhaka).strftime("%H"))
+        if datetime_Dhaka >= 10 and datetime_Dhaka <= 22:
+            # Execute the google_sheet_reader function to get the starting slip number
+            starting_slip_number = google_sheet_reader()[1]
+
+            # Execute the crawling
+            execute_all()
+        else:
+            # Don't do anything
+            pass
