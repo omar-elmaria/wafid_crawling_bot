@@ -55,10 +55,11 @@ chrome_options.add_argument("--window-size=1920x1080") # Set the Chrome window s
 
 # Global inputs (1): Basic information
 base_url = "https://wafid.com/medical-status-search/"
-slip_number_list_len = 100
+slip_number_list_len = 50
 parallel_jobs = -1
 webdriver_waiting_time = 30
 recaptcha_retries = 5
+close_to_end_of_cycle_index = 40 # The index of the slip number list where the bot will send a message to Telegram informing the user that it is time to change the starting slip number
 
 # Create a list of hours outside the crawling window where the bot will sleep
 starting_local_time = 10 # 10 am
@@ -181,11 +182,11 @@ def gcc_enter_slip_number_func(driver, slip_number, is_randomize_waiting_time):
     for idx in range(recaptcha_retries):
         # Declare a waiting time based on the iteration number
         if idx + 1 <= 5:
-            wait_time = 2.5 # 2.5 seconds
-        elif idx + 1 > 5 and idx + 1 <= 10:
             wait_time = 5 # 5 seconds
-        else:
+        elif idx + 1 > 5 and idx + 1 <= 10:
             wait_time = 7.5 # 7.5 seconds
+        else:
+            wait_time = 10 # 10 seconds
 
         # Extract the captcha message. Don't use driver.find_element because it is slow
         soup1 = BeautifulSoup(markup=driver.page_source, features="html.parser")
@@ -201,10 +202,11 @@ def gcc_enter_slip_number_func(driver, slip_number, is_randomize_waiting_time):
         else:
             # Clear the form, re-enter the slip number and re-submit the form
             driver.find_element(by=By.XPATH, value="//input[@id='id_gcc_slip_no']").clear()
+            time.sleep(2.5)
             if is_randomize_waiting_time == True:
                 for char in str(slip_number):
                     driver.find_element(by=By.XPATH, value="//input[@id='id_gcc_slip_no']").send_keys(char)
-                    time.sleep(random.uniform(0.1, 0.2)) # Generate a random number between 0.1 and 0.2
+                    time.sleep(random.uniform(0.5, 0.7)) # Generate a random number between 0.5 and 0.7
             else:
                 driver.find_element(by=By.XPATH, value="//input[@id='id_gcc_slip_no']").send_keys(slip_number)
             time.sleep(wait_time)
@@ -215,7 +217,7 @@ def gcc_enter_slip_number_func(driver, slip_number, is_randomize_waiting_time):
     return idx, captcha_msg
 
 # Define a function to extract the medical center and send a Telegram notification
-def extract_medical_center_parallel(slip):
+def extract_medical_center_parallel(slip, slip_numbers_list):
     """
     This is a function that extracts the medical center and sends a Telegram notification after the slip number has been successfully submitted.
     Parameters of the function:
@@ -246,6 +248,14 @@ def extract_medical_center_parallel(slip):
     # Define an event loop to manage and execute async tasks such as coroutines and callbacks and assign it to the parallel process using set_event_loop 
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
+
+    # If the slip number = the 90th element of slip_numbers_list, send a message informing the user that it is time to change the starting slip number
+    if slip == slip_numbers_list[close_to_end_of_cycle_index]:
+        loop.run_until_complete(tg_bot.send_telegram_message(
+                bot=tg_bot.wafid_bot_obj,
+                chat_id=tg_bot.wafid_chat_id,
+                message=f"*We reached slip number {close_to_end_of_cycle_index}. Please change the slip number now before another crawling cycle starts*"
+            ))
 
     try:
         # Instantiate the web driver and set the implicit waiting time to be 60 seconds
@@ -331,7 +341,7 @@ def extract_medical_center_parallel(slip):
 
         # Send a message to the Telegram bot saying that an error occurred
         logging.exception(f"An error occurred while crawling the wafid bot for slip number {slip}: {e}")
-        loop.run_until_complete(tg_bot.send_telegram_message(bot=tg_bot.bot_errors, chat_id=tg_bot.errors_bot_chat_id, message=f"An error occurred while crawling the wafid bot: {e}"))
+        loop.run_until_complete(tg_bot.send_telegram_message(bot=tg_bot.errors_bot_obj, chat_id=tg_bot.errors_bot_chat_id, message=f"An error occurred while crawling the wafid bot: {e}"))
 
 def execute_all():
     """
@@ -339,7 +349,7 @@ def execute_all():
     """
     # Execute the google_sheet_reader function to get the slip number list
     slip_numbers_list = google_sheet_reader()[0]
-    Parallel(n_jobs=parallel_jobs, verbose=13)(delayed(extract_medical_center_parallel)(slip=slip) for slip in slip_numbers_list)
+    Parallel(n_jobs=parallel_jobs, verbose=13)(delayed(extract_medical_center_parallel)(slip=slip, slip_numbers_list=slip_numbers_list) for slip in slip_numbers_list)
 
 if __name__ == "__main__":
     while True:
