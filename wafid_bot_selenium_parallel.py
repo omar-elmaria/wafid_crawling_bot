@@ -60,9 +60,20 @@ parallel_jobs = -1
 webdriver_waiting_time = 30
 recaptcha_retries = 5
 
+# Create a list of hours outside the crawling window where the bot will sleep
+starting_local_time = 10 # 10 am
+ending_local_time = 21 # 10 pm (we subtract one because we still want to be crawling at 21:59)
+
+day_hours = np.arange(1, 25).astype(str)
+mask = day_hours == "24" # Change 24 to 00 by creating a boolean mask to identify elements equal to "24"
+day_hours[mask] = "00" # Replace elements in the array that match the condition with new_value
+
+bot_crawling_window = np.arange(starting_local_time, ending_local_time + 1).astype(str) # The hours where the bot will crawl the website
+outside_crawling_hrs = day_hours[~np.isin(day_hours, bot_crawling_window)].tolist() # The hours where the bot will sleep
+
 ###-----------------------------###-----------------------------###
 
-# Global inputs (2): Get the list of slip numbers from the Google Sheet --> https://docs.google.com/spreadsheets/d/1F2F2yWmvMebUG1rtppzt1Z9RZ9bOSHwu2VjXzk4XmC8/edit?pli=1#gid=0
+# Get the list of slip numbers from the Google Sheet --> https://docs.google.com/spreadsheets/d/1F2F2yWmvMebUG1rtppzt1Z9RZ9bOSHwu2VjXzk4XmC8/edit?pli=1#gid=0
 # Replace 'your_spreadsheet_key' with the key of your Google Sheets document.
 # You can find the key in the URL of your spreadsheet: 'https://docs.google.com/spreadsheets/d/your_spreadsheet_key/edit'
 def google_sheet_reader():
@@ -139,6 +150,22 @@ def solve_capmonster_captcha(slip_number):
 
 ###-----------------------------###-----------------------------###
 
+# Create a class to store the Telegram bot information
+class TelegramBot:
+    def __init__(self, wafid_bot_token, wafid_chat_id, errors_bot_token, errors_bot_chat_id):
+        self.wafid_bot_token = wafid_bot_token
+        self.wafid_chat_id = wafid_chat_id
+        self.wafid_bot_obj = Bot(token=wafid_bot_token)
+        self.errors_bot_token = errors_bot_token
+        self.errors_bot_chat_id = errors_bot_chat_id
+        self.errors_bot_obj = Bot(token=errors_bot_token)
+
+    # Function to send Telegram message
+    async def send_telegram_message(self, bot, chat_id, message):
+        await bot.send_message(chat_id=chat_id, text=message, parse_mode=ParseMode.MARKDOWN)
+
+###-----------------------------###-----------------------------###
+
 # Define a function to enter the GCC slip number and click on the "Check" button
 def gcc_enter_slip_number_func(driver, slip_number, is_randomize_waiting_time):
     """
@@ -154,11 +181,11 @@ def gcc_enter_slip_number_func(driver, slip_number, is_randomize_waiting_time):
     for idx in range(recaptcha_retries):
         # Declare a waiting time based on the iteration number
         if idx + 1 <= 5:
-            wait_time = 5 # 5 seconds
+            wait_time = 2.5 # 2.5 seconds
         elif idx + 1 > 5 and idx + 1 <= 10:
-            wait_time = 7.5 # 7.5 seconds
+            wait_time = 5 # 5 seconds
         else:
-            wait_time = 10 # 10 seconds
+            wait_time = 7.5 # 7.5 seconds
 
         # Extract the captcha message. Don't use driver.find_element because it is slow
         soup1 = BeautifulSoup(markup=driver.page_source, features="html.parser")
@@ -174,7 +201,6 @@ def gcc_enter_slip_number_func(driver, slip_number, is_randomize_waiting_time):
         else:
             # Clear the form, re-enter the slip number and re-submit the form
             driver.find_element(by=By.XPATH, value="//input[@id='id_gcc_slip_no']").clear()
-            time.sleep(2.5)
             if is_randomize_waiting_time == True:
                 for char in str(slip_number):
                     driver.find_element(by=By.XPATH, value="//input[@id='id_gcc_slip_no']").send_keys(char)
@@ -204,11 +230,13 @@ def extract_medical_center_parallel(slip):
         format="%(levelname)s - %(asctime)s - %(message)s",
     )
 
-    # Global inputs (3): Telegram bot
-    wafid_bot_token = os.getenv("WAFID_BOT_TOKEN")
-    wafid_chat_id = os.getenv("WAFID_BOT_CHAT_ID")
-    errors_bot_token = os.getenv("ERRORS_BOT_TOKEN")
-    errors_bot_chat_id = os.getenv("ERRORS_BOT_CHAT_ID")
+    # Instantiate the Telegram bot class
+    tg_bot = TelegramBot(
+        wafid_bot_token = os.getenv("WAFID_BOT_TOKEN"),
+        wafid_chat_id = os.getenv("WAFID_BOT_CHAT_ID"),
+        errors_bot_token = os.getenv("ERRORS_BOT_TOKEN"),
+        errors_bot_chat_id = os.getenv("ERRORS_BOT_CHAT_ID")
+    )
     
     # Global inputs (4): Proxy credentials
     PROXY_SERVICE_USERNAME = os.getenv("PROXY_SERVICE_USERNAME")
@@ -218,14 +246,6 @@ def extract_medical_center_parallel(slip):
     # Define an event loop to manage and execute async tasks such as coroutines and callbacks and assign it to the parallel process using set_event_loop 
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
-
-    # Create the bot objects
-    wafid_bot_obj = Bot(token=wafid_bot_token)
-    bot_errors = Bot(token=errors_bot_token)
-
-    # Function to send Telegram message
-    async def send_telegram_message(bot, chat_id, message):
-        await bot.send_message(chat_id=chat_id, text=message, parse_mode=ParseMode.MARKDOWN)
 
     try:
         # Instantiate the web driver and set the implicit waiting time to be 60 seconds
@@ -262,9 +282,9 @@ def extract_medical_center_parallel(slip):
 
         # If it is the last iteration and and the form was not submitted successfuly, send a message to Telegram saying that it was not possible to submit the form for this slip number
         if idx + 1 == recaptcha_retries and captcha_msg is not None:
-            loop.run_until_complete(send_telegram_message(
-                bot=wafid_bot_obj,
-                chat_id=wafid_chat_id,
+            loop.run_until_complete(tg_bot.send_telegram_message(
+                bot=tg_bot.wafid_bot_obj,
+                chat_id=tg_bot.wafid_chat_id,
                 message=f"It was not possible to submit the form successfully for slip number {slip} after {idx + 1} times"
             ))
         
@@ -280,7 +300,7 @@ def extract_medical_center_parallel(slip):
             logging.info(records_not_found_message)
 
             # Send a Telegram message saying that there was no record found for this slip number
-            loop.run_until_complete(send_telegram_message(bot=wafid_bot_obj, chat_id=wafid_chat_id, message=records_not_found_message))
+            loop.run_until_complete(tg_bot.send_telegram_message(bot=tg_bot.wafid_bot_obj, chat_id=tg_bot.wafid_chat_id, message=records_not_found_message))
         if status_message2.get_attribute_list("value")[0] is not None:
             # Extract the fields of interest
             output_dict = {
@@ -297,9 +317,9 @@ def extract_medical_center_parallel(slip):
                 output_dict_message = f"Records were found for slip number {slip}. It took {idx + 1} iterations to submit the form successfully. Info --> *{output_dict}*" # Bold the output
             else:
                 output_dict_message = f"Records were found for slip number {slip}. It took {idx + 1} iterations to submit the form successfully. Info --> {output_dict}" # Normal text
-            loop.run_until_complete(send_telegram_message(
-                bot=wafid_bot_obj,
-                chat_id=wafid_chat_id,
+            loop.run_until_complete(tg_bot.send_telegram_message(
+                bot=tg_bot.wafid_bot_obj,
+                chat_id=tg_bot.wafid_chat_id,
                 message=output_dict_message
             ))
         
@@ -311,7 +331,7 @@ def extract_medical_center_parallel(slip):
 
         # Send a message to the Telegram bot saying that an error occurred
         logging.exception(f"An error occurred while crawling the wafid bot for slip number {slip}: {e}")
-        loop.run_until_complete(send_telegram_message(bot=bot_errors, chat_id=errors_bot_chat_id, message=f"An error occurred while crawling the wafid bot: {e}"))
+        loop.run_until_complete(tg_bot.send_telegram_message(bot=tg_bot.bot_errors, chat_id=tg_bot.errors_bot_chat_id, message=f"An error occurred while crawling the wafid bot: {e}"))
 
 def execute_all():
     """
@@ -325,13 +345,39 @@ if __name__ == "__main__":
     while True:
         # Get the current time in Dhaka
         tz_Dhaka = pytz.timezone('Asia/Dhaka')
-        datetime_Dhaka = int(datetime.now(tz_Dhaka).strftime("%H"))
-        if datetime_Dhaka >= 10 and datetime_Dhaka <= 22:
+        datetime_Dhaka = datetime.now(tz_Dhaka).strftime("%H")
+        if int(datetime_Dhaka) >= starting_local_time and int(datetime_Dhaka) <= ending_local_time:
             # Execute the google_sheet_reader function to get the starting slip number
             starting_slip_number = google_sheet_reader()[1]
 
+            # Instantiate the Telegram bot class
+            tg_bot = TelegramBot(
+                wafid_bot_token = os.getenv("WAFID_BOT_TOKEN"),
+                wafid_chat_id = os.getenv("WAFID_BOT_CHAT_ID"),
+                errors_bot_token = os.getenv("ERRORS_BOT_TOKEN"),
+                errors_bot_chat_id = os.getenv("ERRORS_BOT_CHAT_ID")
+            )
+
+            # Define the current event loop to manage and execute async tasks such as coroutines and callbacks
+            loop = asyncio.get_event_loop()
+
+            # Send a message to the Telegram channel informing the user that a new crawling cycle has started
+            loop.run_until_complete(tg_bot.send_telegram_message(
+                bot=tg_bot.wafid_bot_obj,
+                chat_id=tg_bot.wafid_chat_id,
+                message=f"*A new crawling cycle is starting for slip {starting_slip_number}*"
+            ))
+
             # Execute the crawling
             execute_all()
+
+            # If the crawling time frame passed, send a message to the channel informing that the bot will sleep until the next crawling window opens
+            if datetime_Dhaka in outside_crawling_hrs:
+                loop.run_until_complete(tg_bot.send_telegram_message(
+                    bot=tg_bot.wafid_bot_obj,
+                    chat_id=tg_bot.wafid_chat_id,
+                    message=f"*The crawling cycle of today finished. The bot will sleep until the next day*"
+                ))
         else:
             # Don't do anything
             pass
